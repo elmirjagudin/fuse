@@ -6,12 +6,30 @@ import errno
 from fuse import FUSE, FuseOSError, Operations
 
 
+# dummy cryto functions
+def _encrypt(data):
+    return bytearray(reversed(data))
+
+
+def _decrypt(data):
+    return bytearray(reversed(data))
+
+
 class File:
-    def __init__(self, data=bytearray()):
-        self.data = data
+    def __init__(self, file_handle, encrypted_data=None):
+        self.file_handle = file_handle
+
+        if encrypted_data is None:
+            self.data = bytearray()
+        else:
+            self.data = _decrypt(encrypted_data)
+
         self.open_handles = 1
+        self.dirty = False
 
     def write(self, data, offset):
+        self.dirty = True
+
         new_data_len = len(data)
         missing_len = (offset + new_data_len) - len(self.data)
 
@@ -21,26 +39,60 @@ class File:
 
         self.data[offset:offset+new_data_len-1] = data
 
+    def truncate(self, length):
+        cur_len = len(self.data)
+
+        if cur_len == length:
+            # already correct length, NOP
+            return
+
+        self.dirty = True
+
+        if length < cur_len:
+            # we need to make truncate our data buffer
+            self.data = self.data[:length]
+            return
+
+        assert length > cur_len
+
+        # we need to grow data, fill with zeros
+        self.data.extend([0] * ((length - cur_len) - 1))
+
 
 class FilesCache:
     def __init__(self, root):
         self.root = root
         self.files = {}
+        self.next_fh = 0
+
+    def next_file_handle(self):
+        nh = self.next_fh
+        self.next_fh += 1
+
+        return nh
 
     def create(self, path):
-        self.files[path] = File()
+        self.files[path] = File(self.next_file_handle())
 
     def open(self, path, data):
         assert path is not self.files  # TODO handle multiple open on same file?
-        self.files[path] = File(data)
+
+        fo = File(self.next_file_handle(), data)
+        self.files[path] = fo
+
+        return fo
 
     def write(self, path, data, offset):
         f = self.files[path]
         f.write(data, offset)
 
+    def truncate(self, path, length):
+        f = self.files[path]
+        f.truncate(length)
+
     def get_ciphertext(self, path):
         f = self.files[path]
-        return f.data
+        return _encrypt(f.data)
 
     def get_plaintext(self, path):
         f = self.files[path]
@@ -90,8 +142,8 @@ class Crypt(Operations):
         print(f"getattr(path={path}, fh={fh})")
         full_path = self._full_path(path)
         st = os.lstat(full_path)
-        return dict((key, getattr(st, key)) for key in ('st_atime', 'st_ctime',
-                     'st_gid', 'st_mode', 'st_mtime', 'st_nlink', 'st_size', 'st_uid'))
+        return dict((key, getattr(st, key)) for key in ("st_atime", "st_ctime",
+                     "st_gid", "st_mode", "st_mtime", "st_nlink", "st_size", "st_uid"))
 
     def readdir(self, path, fh):
         print(f"readdir(self, path, fh)")
@@ -161,12 +213,10 @@ class Crypt(Operations):
         # TODO handle flags properly
 
         full_path = self._full_path(path)
-#        with open(full_path, "rb") as f:
-#            self.files.open(path, f.read())
-        self.files.open(path, bytearray())
+        with open(full_path, "rb") as f:
+            fo = self.files.open(path, f.read())
 
-        print(f"open full_path={full_path}")
-        return os.open(full_path, flags)
+        return fo.file_handle
 
     def create(self, path, mode, fi=None):
         print(f"create(path={path}, mode={mode}, fi={fi})")
@@ -178,13 +228,15 @@ class Crypt(Operations):
         return fd
 
     def read(self, path, length, offset, fh):
-        print(f"read(path={path}, length={length}, offset={offset}, fh={fh})")
+        try:
+            print(f"read(path={path}, length={length}, offset={offset}, fh={fh})")
+            data = self.files.get_plaintext(path)
+            # TODO handle cases reading beyound end of data ?
+            # e.g. when offset + length > len(data)
 
-        data = self.files.get_plaintext(path)
-        # TODO handle cases reading beyound end of data ?
-        # e.g. when offset + length > len(data)
-
-        return data[offset:offset+length]
+            return bytes(data[offset:offset+length])
+        except:
+            print("read BAH")
 
     def write(self, path, buf, offset, fh):
         print(f"write(path={path}, buf=..., offset={offset}, fh={fh})")
@@ -192,33 +244,21 @@ class Crypt(Operations):
         return len(buf)
 
     def truncate(self, path, length, fh=None):
-        print(f"truncate(self, path, length, fh=None)")
+        print(f"truncate(path={path} length={length} fh={fh})")
 
         full_path = self._full_path(path)
         with open(full_path, 'r+') as f:
             f.truncate(length)
 
     def flush(self, path, fh):
-        print(f"1flush(path={path}, fh={fh})")
-
-        try:
-
-            os.lseek(fh, 0, os.SEEK_SET)
-            r = os.write(fh, self.files.get_ciphertext(path))
-            # TODO, check value of r, handle partial writes?
-
-            r = os.fsync(fh)
-            print(f"2flush(path={path}, fh={fh}) = {r}")
-            return r
-        except Exception as e:
-            print("BAH", e)
+        # TODO only flush dirty files
+        full_path = self._full_path(path)
+        with open(full_path, "wb") as f:
+            f.write(self.files.get_ciphertext(path))
 
     def release(self, path, fh):
+        print(f"release(path={path}, fh={fh})")
         self.files.release(path)
-        r = os.close(fh)
-
-        print(f"release(path={path}, fh={fh}) = {r}")
-        return r
 
     def fsync(self, path, fdatasync, fh):
         print(f"fsync(path={path}, fdatasync={fdatasync}, fh={fh})")
