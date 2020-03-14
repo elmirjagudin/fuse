@@ -1,0 +1,6 @@
+name: Fuse
+channels:
+  - conda-forge
+dependencies:
+  - python=3.6
+  - fusepy=3.0.1
