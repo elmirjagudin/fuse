@@ -8,11 +8,13 @@ from fuse import FUSE, FuseOSError, Operations
 
 # dummy cryto functions
 def _encrypt(data):
-    return bytearray(reversed(data))
+    return bytearray(data)
+    #return bytearray(reversed(data))
 
 
 def _decrypt(data):
-    return bytearray(reversed(data))
+    return bytearray(data)
+    #return bytearray(reversed(data))
 
 
 class File:
@@ -246,9 +248,7 @@ class Crypt(Operations):
     def truncate(self, path, length, fh=None):
         print(f"truncate(path={path} length={length} fh={fh})")
 
-        full_path = self._full_path(path)
-        with open(full_path, 'r+') as f:
-            f.truncate(length)
+        self.files.truncate(path, length)
 
     def flush(self, path, fh):
         # TODO only flush dirty files
