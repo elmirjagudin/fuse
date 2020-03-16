@@ -125,7 +125,7 @@ class Passthrough(Operations):
     def read(self, path, length, offset, fh):
         os.lseek(fh, offset, os.SEEK_SET)
         r = os.read(fh, length)
-        print(f"read(path={path} length={length} offset={offset} fh={fh}) = {r}")
+        print(f"read(path={path} length={length} offset={offset} fh={fh}) = {len(r)} bytes")
         return r
 
     def write(self, path, buf, offset, fh):
