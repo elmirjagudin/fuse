@@ -247,10 +247,10 @@ class Crypt(Operations):
 
     def truncate(self, path, length, fh=None):
         print(f"truncate(path={path} length={length} fh={fh})")
-
         self.files.truncate(path, length)
 
     def flush(self, path, fh):
+        print(f"flush(path={path} fh={fh})")
         # TODO only flush dirty files
         full_path = self._full_path(path)
         with open(full_path, "wb") as f:
