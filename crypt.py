@@ -74,7 +74,9 @@ class FilesCache:
         return nh
 
     def create(self, path):
-        self.files[path] = File(self.next_file_handle())
+        f = File(self.next_file_handle())
+        self.files[path] = f
+        return f
 
     def open(self, path, data):
         assert path is not self.files  # TODO handle multiple open on same file?
@@ -204,7 +206,7 @@ class Crypt(Operations):
         return os.link(self._full_path(target), self._full_path(name))
 
     def utimens(self, path, times=None):
-        print(f"utimens(self, path, times=None)")
+        print(f"utimens(path={path}, times={times})")
         return os.utime(self._full_path(path), times)
 
     # File methods
@@ -224,10 +226,10 @@ class Crypt(Operations):
         print(f"create(path={path}, mode={mode}, fi={fi})")
 
         full_path = self._full_path(path)
-        fd = os.open(full_path, os.O_WRONLY | os.O_CREAT, mode)
-        self.files.create(path)
+        os.close(os.open(full_path, os.O_WRONLY | os.O_CREAT, mode))
+        f = self.files.create(path)
 
-        return fd
+        return f.file_handle
 
     def read(self, path, length, offset, fh):
         try:
@@ -249,15 +251,19 @@ class Crypt(Operations):
         print(f"truncate(path={path} length={length} fh={fh})")
         self.files.truncate(path, length)
 
-    def flush(self, path, fh):
-        print(f"flush(path={path} fh={fh})")
+    def _do_flush(self, path):
         # TODO only flush dirty files
         full_path = self._full_path(path)
         with open(full_path, "wb") as f:
             f.write(self.files.get_ciphertext(path))
 
+    def flush(self, path, fh):
+        print(f"flush(path={path} fh={fh})")
+        self._do_flush(path)
+
     def release(self, path, fh):
         print(f"release(path={path}, fh={fh})")
+        self._do_flush(path)
         self.files.release(path)
 
     def fsync(self, path, fdatasync, fh):
