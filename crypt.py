@@ -235,9 +235,6 @@ class Crypt(Operations):
         try:
             print(f"read(path={path}, length={length}, offset={offset}, fh={fh})")
             data = self.files.get_plaintext(path)
-            # TODO handle cases reading beyound end of data ?
-            # e.g. when offset + length > len(data)
-
             return bytes(data[offset:offset+length])
         except:
             print("read BAH")
